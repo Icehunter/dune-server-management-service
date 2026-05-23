@@ -5,6 +5,8 @@ import type { ServiceConfig } from './types.js';
 
 const DEFAULTS = {
   binDir: '/home/dune/.dune/bin',
+  dashboardHost: '127.0.0.1',
+  dashboardPort: 8787,
   timeZone: 'Europe/Amsterdam'
 } as const;
 
@@ -13,6 +15,13 @@ export function loadConfig(): ServiceConfig {
 
   return {
     binDir: process.env.DUNE_BIN_DIR || DEFAULTS.binDir,
+    dashboardHost: process.env.DUNE_DASHBOARD_HOST || DEFAULTS.dashboardHost,
+    dashboardPort: parsePort(process.env.DUNE_DASHBOARD_PORT, DEFAULTS.dashboardPort),
+    dbPath:
+      process.env.DUNE_SERVICE_DB_PATH ||
+      (process.platform === 'win32'
+        ? resolve(process.cwd(), '.data', 'server-management-service.sqlite')
+        : '/home/dune/.dune/state/server-management-service.sqlite'),
     timeZone: process.env.DUNE_SERVICE_TIME_ZONE || DEFAULTS.timeZone
   };
 }
@@ -25,6 +34,20 @@ export function validateConfig(config: ServiceConfig): void {
   if (!existsSync(config.binDir)) {
     throw new Error(`DUNE_BIN_DIR does not exist: ${config.binDir}`);
   }
+}
+
+function parsePort(value: string | undefined, fallback: number): number {
+  if (!value) {
+    return fallback;
+  }
+
+  const port = Number(value);
+
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error(`Invalid DUNE_DASHBOARD_PORT: ${value}`);
+  }
+
+  return port;
 }
 
 function loadDotEnv(path: string): void {

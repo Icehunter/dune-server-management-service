@@ -9,6 +9,8 @@ The first version wraps the remote scripts already installed on the server:
 - pending update apply check every minute
 - daily restart notice at 04:30 Europe/Amsterdam
 - daily restart at 05:00 Europe/Amsterdam
+- SQLite task history and logs
+- local web dashboard
 
 It defaults to dry-run mode. Use `--run` only when you want it to execute local server commands.
 
@@ -40,4 +42,5 @@ npm run run
 - Runtime has no npm dependencies; TypeScript is a dev dependency.
 - `.env` is ignored by Git.
 - Operational behavior lives in the existing scripts under `/home/dune/.dune/bin`.
+- The dashboard listens on `127.0.0.1:8787` by default. Use an SSH tunnel for access.
 - Keep command-auth tokens and private keys out of this repo.

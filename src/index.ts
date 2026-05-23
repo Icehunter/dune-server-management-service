@@ -1,21 +1,28 @@
 import { loadConfig, validateConfig } from './config.js';
+import { startDashboard } from './dashboard.js';
 import { createLogger } from './logger.js';
+import { createRunStore } from './run-store.js';
 import { Scheduler } from './scheduler.js';
+import { TaskRunner } from './task-runner.js';
 import { createTasks } from './tasks.js';
 
 const args = parseArgs(process.argv.slice(2));
 const config = loadConfig();
-const logger = createLogger();
+const runStore = createRunStore(config.dbPath);
+const logger = createLogger((entry) => runStore.log(entry));
+const runner = new TaskRunner({ logger, runStore });
 const tasks = createTasks(config);
 const dryRun = !args.has('run');
 
 if (args.has('help')) {
   printHelp();
+  runStore.close();
   process.exit(0);
 }
 
 if (args.has('list')) {
   printTasks();
+  runStore.close();
   process.exit(0);
 }
 
@@ -33,28 +40,37 @@ if (args.has('once')) {
     process.exit(1);
   }
 
-  await task.run({ dryRun, logger });
+  await runner.run(task, { dryRun, trigger: 'manual' });
+  runStore.close();
   process.exit(0);
 }
 
 logger.info(`Starting Dune server management service (${dryRun ? 'dry-run' : 'live'} mode).`);
 logger.info(`Timezone: ${config.timeZone}`);
 logger.info(`Script directory: ${config.binDir}`);
+logger.info(`Database: ${config.dbPath}`);
 
 if (dryRun) {
   logger.info('Pass --run to execute local server commands.');
 }
 
-const scheduler = new Scheduler({ logger, timeZone: config.timeZone });
+const dashboard = startDashboard({ config, logger, runStore });
+const scheduler = new Scheduler({ logger, runner, timeZone: config.timeZone });
 scheduler.add(tasks);
 scheduler.start({ dryRun });
 
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   process.on(signal, () => {
-    logger.info('Stopping service.');
-    scheduler.stop();
-    process.exit(0);
+    void stop();
   });
+}
+
+async function stop(): Promise<void> {
+  logger.info('Stopping service.');
+  scheduler.stop();
+  await dashboard.close();
+  runStore.close();
+  process.exit(0);
 }
 
 function parseArgs(argv: string[]): Map<string, string | true> {
@@ -91,7 +107,7 @@ Usage:
   node dist/index.js --dry-run
   node dist/index.js --run
 
-The service is dry-run by default. Use --run for live remote execution.
+The service is dry-run by default. Use --run for live server execution.
 `);
 }
 

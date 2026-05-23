@@ -2,10 +2,13 @@
 .env.*
 !.env.example
 
+.data/
 node_modules/
 dist/
 logs/
 *.log
+*.sqlite
+*.sqlite-*
 
 .DS_Store
 Thumbs.db

@@ -1,14 +1,24 @@
+import { TaskRunner } from './task-runner.js';
 import type { Logger, ServiceTask, TaskSchedule } from './types.js';
 
 export class Scheduler {
   readonly #logger: Logger;
+  readonly #runner: TaskRunner;
   readonly #timeZone: string;
   readonly #tasks: ServiceTask[] = [];
-  readonly #runningTaskIds = new Set<string>();
   #timers: NodeJS.Timeout[] = [];
 
-  constructor({ logger, timeZone }: { logger: Logger; timeZone: string }) {
+  constructor({
+    logger,
+    runner,
+    timeZone
+  }: {
+    logger: Logger;
+    runner: TaskRunner;
+    timeZone: string;
+  }) {
     this.#logger = logger;
+    this.#runner = runner;
     this.#timeZone = timeZone;
   }
 
@@ -49,7 +59,7 @@ export class Scheduler {
 
     this.#timers.push(
       setInterval(() => {
-        void this.#runTask(task, dryRun);
+        void this.#runner.run(task, { dryRun, trigger: 'scheduled' });
       }, schedule.everyMs)
     );
   }
@@ -71,31 +81,12 @@ export class Scheduler {
 
       this.#timers.push(
         setTimeout(() => {
-          void this.#runTask(task, dryRun).finally(scheduleNext);
+          void this.#runner.run(task, { dryRun, trigger: 'scheduled' }).finally(scheduleNext);
         }, Math.max(0, nextRun.getTime() - Date.now()))
       );
     };
 
     scheduleNext();
-  }
-
-  async #runTask(task: ServiceTask, dryRun: boolean): Promise<void> {
-    if (this.#runningTaskIds.has(task.id)) {
-      this.#logger.warn(`${task.id} is still running; skipping overlapping run.`);
-      return;
-    }
-
-    this.#runningTaskIds.add(task.id);
-
-    try {
-      this.#logger.info(`Starting task ${task.id}.`);
-      await task.run({ dryRun, logger: this.#logger });
-      this.#logger.info(`Finished task ${task.id}.`);
-    } catch (error) {
-      this.#logger.error(`${task.id} failed: ${errorMessage(error)}`);
-    } finally {
-      this.#runningTaskIds.delete(task.id);
-    }
   }
 }
 
@@ -184,8 +175,4 @@ function zonedWallTimeToUtc(target: WallClockParts, timeZone: string): Date {
   }
 
   return new Date(utcMs);
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
