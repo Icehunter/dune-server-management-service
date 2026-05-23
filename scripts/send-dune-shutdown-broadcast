@@ -1,0 +1,123 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat <<'USAGE'
+Usage:
+  send-dune-shutdown-broadcast --timestamp UNIX_SECONDS [--frequency SECONDS] [--type Restart]
+
+Options:
+  --namespace NAME       Override auto-detected Kubernetes namespace
+  --mq-pod NAME          Override auto-detected Game RabbitMQ pod
+  --timestamp SECONDS    Shutdown/restart target Unix timestamp
+  --frequency SECONDS    Broadcast repeat frequency; default 600
+  --duration SECONDS     Shutdown duration; default 0
+  --type TYPE            Restart, Maintenance, or Update; default Restart
+  --dry-run              Print safe summary without publishing
+USAGE
+}
+
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/dune-service-common.sh
+source "$script_dir/lib/dune-service-common.sh"
+
+namespace=""
+mq_pod=""
+shutdown_timestamp=""
+frequency="600"
+shutdown_type="Restart"
+shutdown_duration="0"
+dry_run=false
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --namespace|-n) namespace="${2:?missing value for $1}"; shift 2 ;;
+    --mq-pod) mq_pod="${2:?missing value for $1}"; shift 2 ;;
+    --timestamp|--shutdown-timestamp) shutdown_timestamp="${2:?missing value for $1}"; shift 2 ;;
+    --frequency|--broadcast-frequency) frequency="${2:?missing value for $1}"; shift 2 ;;
+    --duration|--shutdown-duration) shutdown_duration="${2:?missing value for $1}"; shift 2 ;;
+    --type|--shutdown-type) shutdown_type="${2:?missing value for $1}"; shift 2 ;;
+    --dry-run) dry_run=true; shift ;;
+    --help|-h) usage; exit 0 ;;
+    *) echo "unknown argument: $1" >&2; usage >&2; exit 2 ;;
+  esac
+done
+
+if ! [[ "$shutdown_timestamp" =~ ^[0-9]+$ ]]; then
+  echo "--timestamp must be a Unix timestamp in seconds" >&2
+  exit 2
+fi
+if ! [[ "$frequency" =~ ^[0-9]+$ ]]; then
+  echo "--frequency must be integer seconds" >&2
+  exit 2
+fi
+if ! [[ "$shutdown_duration" =~ ^[0-9]+$ ]]; then
+  echo "--duration must be integer seconds" >&2
+  exit 2
+fi
+case "$shutdown_type" in Restart|Maintenance|Update) ;; *) echo "--type must be Restart, Maintenance, or Update" >&2; exit 2 ;; esac
+
+dune_detect_game_mq "$namespace" "$mq_pod"
+
+if [[ "$dry_run" == true ]]; then
+  echo "dry_run=true namespace=$DUNE_NAMESPACE mq_pod=$DUNE_MQ_POD shutdown_type=$shutdown_type shutdown_timestamp=$shutdown_timestamp frequency=$frequency duration=$shutdown_duration"
+  exit 0
+fi
+
+dune_load_command_auth_token
+
+payload_b64=$(DUNE_SHUTDOWN_TYPE="$shutdown_type" DUNE_SHUTDOWN_TIMESTAMP="$shutdown_timestamp" DUNE_BROADCAST_FREQUENCY="$frequency" DUNE_SHUTDOWN_DURATION="$shutdown_duration" DUNE_COMMAND_AUTH_TOKEN="$DUNE_COMMAND_AUTH_TOKEN_VALUE" python3 - <<'PY'
+import base64, json, os, time
+shutdown_type = os.environ["DUNE_SHUTDOWN_TYPE"]
+shutdown_timestamp = int(os.environ["DUNE_SHUTDOWN_TIMESTAMP"])
+frequency = int(os.environ["DUNE_BROADCAST_FREQUENCY"])
+duration = int(os.environ["DUNE_SHUTDOWN_DURATION"])
+token = os.environ["DUNE_COMMAND_AUTH_TOKEN"]
+inner = {
+    "ServerCommand": "ServiceBroadcast",
+    "BroadcastType": "ServerShutdown",
+    "BroadcastPayload": {
+        "ShutdownType": shutdown_type,
+        "DateTimestamp": int(time.time()),
+        "ShutdownDuration": duration,
+        "ShutdownTimestamp": shutdown_timestamp,
+        "BroadcastFrequency": frequency,
+    },
+}
+outer = {
+    "Version": 2,
+    "AuthToken": token,
+    "MessageContent": json.dumps(inner, separators=(",", ":")),
+}
+print(base64.b64encode(json.dumps(outer, separators=(",", ":")).encode()).decode())
+PY
+)
+
+eval_file=$(mktemp)
+cleanup() { rm -f "$eval_file"; }
+trap cleanup EXIT
+
+cat > "$eval_file" <<EOF
+Outer = base64:decode(<<"$payload_b64">>),
+XName = rabbit_misc:r(<<"/">>, exchange, <<"heartbeats">>),
+X = rabbit_exchange:lookup_or_die(XName),
+MsgId = list_to_binary("manual-server-shutdown-" ++ integer_to_list(erlang:system_time(millisecond))),
+P = {list_to_atom("P_basic"), <<"Content">>, undefined, [], undefined,
+     undefined, undefined, undefined, undefined, MsgId, undefined,
+     undefined, <<"fls">>, <<"fls_backend">>, undefined},
+Content = rabbit_basic:build_content(P, Outer),
+{ok, Msg} = rabbit_basic:message(XName, <<"notifications">>, Content),
+Result = rabbit_queue_type:publish_at_most_once(X, Msg),
+io:format("publish=~p exchange=heartbeats routing=notifications app_id=fls_backend user_id=fls shutdown_type=~p shutdown_timestamp=~p frequency=~p duration=~p~n",
+          [Result, <<"$shutdown_type">>, $shutdown_timestamp, $frequency, $shutdown_duration]).
+EOF
+
+"${kubectl_cmd[@]}" exec -i -n "$DUNE_NAMESPACE" "$DUNE_MQ_POD" -- sh -lc '
+  set -eu
+  export PATH=/opt/rabbitmq/sbin:/opt/erlang/lib/erlang/bin:/opt/erlang/lib/erlang/erts-14.2.5.12/bin:/bin:/usr/bin:/usr/local/bin:$PATH
+  cat > /tmp/dune-server-shutdown-broadcast.erl
+  expr=$(cat /tmp/dune-server-shutdown-broadcast.erl)
+  /opt/rabbitmq/sbin/rabbitmqctl eval "$expr"
+  rm -f /tmp/dune-server-shutdown-broadcast.erl
+' < "$eval_file"
+

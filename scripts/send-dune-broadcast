@@ -1,0 +1,115 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat <<'USAGE'
+Usage:
+  send-dune-broadcast --title TEXT --message TEXT [--duration SECONDS]
+
+Options:
+  --namespace NAME       Override auto-detected Kubernetes namespace
+  --mq-pod NAME          Override auto-detected Game RabbitMQ pod
+  --title TEXT           Broadcast title
+  --message TEXT         Broadcast body
+  --duration SECONDS     Broadcast duration; default 30
+  --dry-run              Print safe summary without publishing
+USAGE
+}
+
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/dune-service-common.sh
+source "$script_dir/lib/dune-service-common.sh"
+
+namespace=""
+mq_pod=""
+title=""
+message=""
+duration="30"
+dry_run=false
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --namespace|-n) namespace="${2:?missing value for $1}"; shift 2 ;;
+    --mq-pod) mq_pod="${2:?missing value for $1}"; shift 2 ;;
+    --title) title="${2:?missing value for $1}"; shift 2 ;;
+    --message) message="${2:?missing value for $1}"; shift 2 ;;
+    --duration) duration="${2:?missing value for $1}"; shift 2 ;;
+    --dry-run) dry_run=true; shift ;;
+    --help|-h) usage; exit 0 ;;
+    *) echo "unknown argument: $1" >&2; usage >&2; exit 2 ;;
+  esac
+done
+
+if [[ -z "$title" || -z "$message" ]]; then
+  echo "--title and --message are required" >&2
+  usage >&2
+  exit 2
+fi
+if ! [[ "$duration" =~ ^[0-9]+$ ]]; then
+  echo "--duration must be integer seconds" >&2
+  exit 2
+fi
+
+dune_detect_game_mq "$namespace" "$mq_pod"
+
+if [[ "$dry_run" == true ]]; then
+  echo "dry_run=true namespace=$DUNE_NAMESPACE mq_pod=$DUNE_MQ_POD title=$title duration=$duration"
+  exit 0
+fi
+
+dune_load_command_auth_token
+
+payload_b64=$(DUNE_BROADCAST_TITLE="$title" DUNE_BROADCAST_MESSAGE="$message" DUNE_BROADCAST_DURATION="$duration" DUNE_COMMAND_AUTH_TOKEN="$DUNE_COMMAND_AUTH_TOKEN_VALUE" python3 - <<'PY'
+import base64, json, os
+title = os.environ["DUNE_BROADCAST_TITLE"]
+message = os.environ["DUNE_BROADCAST_MESSAGE"]
+duration = int(os.environ["DUNE_BROADCAST_DURATION"])
+token = os.environ["DUNE_COMMAND_AUTH_TOKEN"]
+inner = {
+    "ServerCommand": "ServiceBroadcast",
+    "BroadcastType": "Generic",
+    "BroadcastPayload": {
+        "BroadcastDuration": duration,
+        "LocalizedText": [
+            {"Key": "en", "Title": title, "Body": message},
+            {"Key": "en-US", "Title": title, "Body": message},
+        ],
+    },
+}
+outer = {
+    "Version": 2,
+    "AuthToken": token,
+    "MessageContent": json.dumps(inner, separators=(",", ":")),
+}
+print(base64.b64encode(json.dumps(outer, separators=(",", ":")).encode()).decode())
+PY
+)
+
+eval_file=$(mktemp)
+cleanup() { rm -f "$eval_file"; }
+trap cleanup EXIT
+
+cat > "$eval_file" <<EOF
+Outer = base64:decode(<<"$payload_b64">>),
+XName = rabbit_misc:r(<<"/">>, exchange, <<"heartbeats">>),
+X = rabbit_exchange:lookup_or_die(XName),
+MsgId = list_to_binary("manual-service-broadcast-" ++ integer_to_list(erlang:system_time(millisecond))),
+P = {list_to_atom("P_basic"), <<"Content">>, undefined, [], undefined,
+     undefined, undefined, undefined, undefined, MsgId, undefined,
+     undefined, <<"fls">>, <<"fls_backend">>, undefined},
+Content = rabbit_basic:build_content(P, Outer),
+{ok, Msg} = rabbit_basic:message(XName, <<"notifications">>, Content),
+Result = rabbit_queue_type:publish_at_most_once(X, Msg),
+io:format("publish=~p exchange=heartbeats routing=notifications app_id=fls_backend user_id=fls duration=~p~n",
+          [Result, $duration]).
+EOF
+
+"${kubectl_cmd[@]}" exec -i -n "$DUNE_NAMESPACE" "$DUNE_MQ_POD" -- sh -lc '
+  set -eu
+  export PATH=/opt/rabbitmq/sbin:/opt/erlang/lib/erlang/bin:/opt/erlang/lib/erlang/erts-14.2.5.12/bin:/bin:/usr/bin:/usr/local/bin:$PATH
+  cat > /tmp/dune-service-broadcast.erl
+  expr=$(cat /tmp/dune-service-broadcast.erl)
+  /opt/rabbitmq/sbin/rabbitmqctl eval "$expr"
+  rm -f /tmp/dune-service-broadcast.erl
+' < "$eval_file"
+

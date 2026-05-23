@@ -1,0 +1,129 @@
+#!/usr/bin/env bash
+set -euo pipefail
+export PATH=/home/dune/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+lock=/tmp/dune-battlegroup-update-check.lock
+exec 9>"$lock"
+if ! flock -n 9; then
+  echo "[$(date -Is)] another update check is already running; exiting"
+  exit 0
+fi
+
+state_dir=/home/dune/.dune/state
+pending_file="$state_dir/pending-battlegroup-update.env"
+steamcmd=/home/dune/.local/bin/steamcmd
+download_path=/home/dune/.dune/download
+broadcast=/home/dune/.dune/bin/send-dune-broadcast
+lead_seconds=1800
+app_id=4754530
+mkdir -p "$state_dir"
+
+if [[ -f "$pending_file" ]]; then
+  echo "[$(date -Is)] pending update already scheduled: $pending_file"
+  exit 0
+fi
+
+if [[ ! -x "$steamcmd" ]]; then
+  echo "[$(date -Is)] ERROR: steamcmd not executable: $steamcmd" >&2
+  exit 1
+fi
+
+latest_build=$(
+  "$steamcmd" +login anonymous +app_info_update 1 +app_info_print "$app_id" +quit 2>/tmp/dune-update-appinfo.err \
+    | awk '
+      /"branches"/ { inbranches=1 }
+      inbranches && /"public"/ { inpublic=1 }
+      inpublic && /"buildid"/ { gsub(/"/, "", $2); print $2; exit }
+    '
+)
+if [[ -z "$latest_build" ]]; then
+  echo "[$(date -Is)] ERROR: could not determine latest Steam buildid" >&2
+  sed -n '1,80p' /tmp/dune-update-appinfo.err >&2 || true
+  exit 1
+fi
+
+manifest="$download_path/steamapps/appmanifest_${app_id}.acf"
+local_build=""
+if [[ -f "$manifest" ]]; then
+  local_build=$(awk '$1 == "\"buildid\"" { gsub(/"/, "", $2); print $2; exit }' "$manifest")
+fi
+
+mapfile -t namespaces < <(kubectl get ns --no-headers -o custom-columns=NAME:.metadata.name | grep '^funcom-seabass-' || true)
+if [[ ${#namespaces[@]} -ne 1 ]]; then
+  echo "[$(date -Is)] ERROR: expected exactly one battlegroup namespace, found ${#namespaces[@]}" >&2
+  printf '  %s\n' "${namespaces[@]}" >&2
+  exit 1
+fi
+ns="${namespaces[0]}"
+bg="${ns#funcom-seabass-}"
+bg_json=$(mktemp)
+kubectl get battlegroup "$bg" -n "$ns" -o json > "$bg_json"
+live_version=$(python3 - "$bg_json" <<'PY'
+import json, re, sys
+obj=json.load(open(sys.argv[1]))
+versions=[]
+def walk(x):
+    if isinstance(x, dict):
+        for k,v in x.items():
+            if k == 'image' and isinstance(v, str):
+                m=re.search(r'/seabass-server(?::|[^:]*:)([0-9]+-0-[A-Za-z0-9_-]+)$', v)
+                if m:
+                    versions.append(m.group(1))
+            walk(v)
+    elif isinstance(x, list):
+        for v in x:
+            walk(v)
+walk(obj.get('spec',{}))
+print(sorted(set(versions))[0] if versions else '')
+PY
+)
+rm -f "$bg_json"
+
+echo "[$(date -Is)] update check latest_build=$latest_build local_build=${local_build:-unknown} live_version=${live_version:-unknown}"
+
+if [[ -n "$local_build" && "$latest_build" == "$local_build" ]]; then
+  echo "[$(date -Is)] no Steam update available"
+  exit 0
+fi
+
+echo "[$(date -Is)] Steam update detected; downloading before scheduling"
+"$steamcmd" +set_spew_level 1 1 +force_install_dir "$download_path" +login anonymous +app_update "$app_id" +logoff +quit
+
+new_local_build=$(awk '$1 == "\"buildid\"" { gsub(/"/, "", $2); print $2; exit }' "$manifest" 2>/dev/null || true)
+downloaded_version_file="$download_path/images/battlegroup/version.txt"
+if [[ ! -s "$downloaded_version_file" ]]; then
+  echo "[$(date -Is)] ERROR: downloaded version file missing: $downloaded_version_file" >&2
+  exit 1
+fi
+downloaded_version=$(tr -d '[:space:]' < "$downloaded_version_file")
+if [[ -z "$downloaded_version" ]]; then
+  echo "[$(date -Is)] ERROR: downloaded version file is empty" >&2
+  exit 1
+fi
+if [[ -n "$live_version" && "$downloaded_version" == "$live_version" ]]; then
+  echo "[$(date -Is)] downloaded BG version equals live version ($downloaded_version); no update scheduled"
+  exit 0
+fi
+
+due_ts=$(( $(date +%s) + lead_seconds ))
+due_iso=$(date -Is -d "@$due_ts")
+tmp="$pending_file.tmp.$$"
+cat > "$tmp" <<EOF
+BG=$bg
+NAMESPACE=$ns
+LATEST_STEAM_BUILD=$latest_build
+LOCAL_STEAM_BUILD=${new_local_build:-unknown}
+LIVE_VERSION=${live_version:-unknown}
+DOWNLOADED_VERSION=$downloaded_version
+DUE_TS=$due_ts
+DUE_ISO=$due_iso
+CREATED_ISO=$(date -Is)
+EOF
+mv "$tmp" "$pending_file"
+
+echo "[$(date -Is)] scheduled update bg=$bg downloaded_version=$downloaded_version due=$due_iso"
+if [[ -x "$broadcast" ]]; then
+  "$broadcast" --title 'Server update' --message "A server update is ready and will be applied in 30 minutes. The server will restart." --duration 60 || true
+else
+  echo "[$(date -Is)] WARNING: broadcast helper missing: $broadcast" >&2
+fi

@@ -1,0 +1,102 @@
+#!/usr/bin/env bash
+set -euo pipefail
+export PATH=/home/dune/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+lock=/tmp/dune-apply-battlegroup-update.lock
+exec 9>"$lock"
+if ! flock -n 9; then
+  echo "[$(date -Is)] another update apply is already running; exiting"
+  exit 0
+fi
+
+pending_file=/home/dune/.dune/state/pending-battlegroup-update.env
+bg_bin=/home/dune/.dune/bin/battlegroup
+broadcast=/home/dune/.dune/bin/send-dune-broadcast
+backup=/home/dune/.dune/bin/cron-battlegroup-backup
+
+if [[ ! -f "$pending_file" ]]; then
+  exit 0
+fi
+# shellcheck disable=SC1090
+source "$pending_file"
+now=$(date +%s)
+if (( now < DUE_TS )); then
+  echo "[$(date -Is)] pending update not due yet due=${DUE_ISO:-$DUE_TS}"
+  exit 0
+fi
+
+ns="${NAMESPACE:?pending file missing NAMESPACE}"
+bg="${BG:?pending file missing BG}"
+echo "[$(date -Is)] applying pending update bg=$bg downloaded=${DOWNLOADED_VERSION:-unknown} live=${LIVE_VERSION:-unknown}"
+
+if [[ -x "$broadcast" ]]; then
+  "$broadcast" --title 'Server update' --message 'Server update is starting now. The server will restart.' --duration 60 || true
+fi
+
+if [[ -x "$backup" ]]; then
+  echo "[$(date -Is)] taking pre-update database backup"
+  "$backup"
+else
+  echo "[$(date -Is)] WARNING: backup helper missing; continuing without pre-update backup" >&2
+fi
+
+count_server_pods() {
+  kubectl get pods -n "$ns" -o json | python3 -c 'import json,sys; d=json.load(sys.stdin); print(sum(1 for p in d.get("items",[]) if "-sg-" in p["metadata"]["name"] and "-pod-" in p["metadata"]["name"] and p["metadata"].get("deletionTimestamp") is None))'
+}
+ready_summary() {
+  kubectl get battlegroup "$bg" -n "$ns" -o json | python3 -c 'import json,sys; d=json.load(sys.stdin); st=d.get("status",{}); servers=st.get("servers",[]) or []; ready=sum(1 for s in servers if s.get("ready") is True and s.get("phase") == "Running"); print(f"phase={st.get('phase','')} serverGroupPhase={st.get('serverGroupPhase','')} ready={ready}/{st.get('size',len(servers))}")'
+}
+
+echo "[$(date -Is)] stopping battlegroup"
+"$bg_bin" stop
+
+timeout=900
+elapsed=0
+interval=10
+while (( elapsed < timeout )); do
+  pods=$(count_server_pods)
+  stop_value=$(kubectl get battlegroup "$bg" -n "$ns" -o jsonpath='{.spec.stop}' 2>/dev/null || true)
+  echo "[$(date -Is)] waiting stopped elapsed=${elapsed}s stop=${stop_value:-?} server_pods=$pods"
+  if [[ "$stop_value" == "true" && "$pods" == "0" ]]; then
+    break
+  fi
+  sleep "$interval"
+  elapsed=$((elapsed + interval))
+done
+if (( elapsed >= timeout )); then
+  echo "[$(date -Is)] ERROR: timeout waiting for battlegroup to stop" >&2
+  exit 1
+fi
+
+echo "[$(date -Is)] applying update-from-downloads"
+"$bg_bin" update-from-downloads
+
+echo "[$(date -Is)] starting battlegroup"
+"$bg_bin" start
+
+timeout=1200
+elapsed=0
+while (( elapsed < timeout )); do
+  summary=$(ready_summary)
+  echo "[$(date -Is)] waiting running elapsed=${elapsed}s $summary"
+  if python3 - "$summary" <<'CHECK'
+import re, sys
+s=sys.argv[1]
+m=re.search(r"ready=(\d+)/(\d+)", s)
+ok="serverGroupPhase=Running" in s and m and int(m.group(1)) == int(m.group(2)) and int(m.group(2)) > 0
+sys.exit(0 if ok else 1)
+CHECK
+  then
+    echo "[$(date -Is)] update complete $summary"
+    rm -f "$pending_file"
+    if [[ -x "$broadcast" ]]; then
+      "$broadcast" --title 'Server update' --message 'Server update is complete and the server is back online.' --duration 60 || true
+    fi
+    exit 0
+  fi
+  sleep "$interval"
+  elapsed=$((elapsed + interval))
+done
+
+echo "[$(date -Is)] ERROR: timeout waiting for battlegroup after update" >&2
+exit 1

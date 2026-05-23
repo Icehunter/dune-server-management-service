@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+set -euo pipefail
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+TZ_NAME=Europe/Amsterdam
+frequency=600
+duration=1800
+dry_run=false
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --dry-run) dry_run=true; shift ;;
+    *) echo "unknown argument: $1" >&2; exit 2 ;;
+  esac
+done
+now=$(date +%s)
+target=$(TZ="$TZ_NAME" date -d 'today 05:00' +%s)
+if (( target <= now )); then
+  target=$(TZ="$TZ_NAME" date -d 'tomorrow 05:00' +%s)
+fi
+target_text=$(TZ="$TZ_NAME" date -d "@$target" '+%Y-%m-%d %H:%M:%S %Z')
+echo "[$(date -Is)] scheduling restart warning for $target_text frequency=${frequency}s duration=${duration}s"
+args=(--timestamp "$target" --frequency "$frequency" --duration "$duration" --type Restart)
+if [[ "$dry_run" == true ]]; then args+=(--dry-run); fi
+/home/dune/.dune/bin/send-dune-shutdown-broadcast "${args[@]}"

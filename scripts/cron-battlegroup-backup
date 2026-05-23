@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+lock=/tmp/dune-battlegroup-backup.lock
+exec 9>"$lock"
+if ! flock -n 9; then
+  echo "[$(date -Is)] another backup is already running; exiting"
+  exit 0
+fi
+
+bg_bin=/home/dune/.dune/bin/battlegroup
+if [[ ! -x "$bg_bin" ]]; then
+  echo "[$(date -Is)] ERROR: battlegroup helper not executable: $bg_bin" >&2
+  exit 1
+fi
+
+mapfile -t namespaces < <(kubectl get ns --no-headers -o custom-columns=NAME:.metadata.name | grep '^funcom-seabass-' || true)
+if [[ "${#namespaces[@]}" -ne 1 ]]; then
+  echo "[$(date -Is)] ERROR: expected exactly one battlegroup namespace, found ${#namespaces[@]}" >&2
+  printf '  %s\n' "${namespaces[@]}" >&2
+  exit 1
+fi
+
+ns="${namespaces[0]}"
+bg="${ns#funcom-seabass-}"
+stamp="$(date -u +%Y%m%d-%H%M%S)"
+backup_name="${bg}-${stamp}.backup"
+host_dir="/funcom/artifacts/database-dumps/${bg}"
+
+echo "[$(date -Is)] starting backup bg=${bg} backup=${backup_name}"
+"$bg_bin" backup "$backup_name"
+
+backup_path="${host_dir}/${backup_name}"
+spec_path="${backup_path}.yaml"
+if ! sudo -n test -s "$backup_path"; then
+  echo "[$(date -Is)] ERROR: backup missing or empty: $backup_path" >&2
+  exit 1
+fi
+
+size=$(sudo -n stat -c '%s' "$backup_path" 2>/dev/null || echo '?')
+echo "[$(date -Is)] backup complete path=${backup_path} bytes=${size}"
+if sudo -n test -f "$spec_path"; then
+  echo "[$(date -Is)] companion spec present path=${spec_path}"
+else
+  echo "[$(date -Is)] WARNING: companion spec missing path=${spec_path}" >&2
+fi
+
+echo "[$(date -Is)] deleting backups older than 7 days under ${host_dir}"
+if sudo -n test -d "$host_dir"; then
+  sudo -n find "$host_dir" -maxdepth 1 -type f \( -name '*.backup' -o -name '*.backup.yaml' \) -mtime +7 -print -delete
+fi
+
+echo "[$(date -Is)] done"
