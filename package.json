@@ -1,0 +1,21 @@
+{
+  "name": "server-management-service",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Operator automation service for Dune dedicated server management.",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "start": "node dist/index.js",
+    "dry-run": "npm run build --silent && node dist/index.js --dry-run",
+    "run": "npm run build --silent && node dist/index.js --run"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.21",
+    "typescript": "^5.8.3"
+  }
+}

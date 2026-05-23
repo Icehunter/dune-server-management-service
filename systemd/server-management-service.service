@@ -1,0 +1,17 @@
+[Unit]
+Description=Dune server management service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/server-management-service
+EnvironmentFile=-/etc/server-management-service.env
+ExecStart=/usr/bin/node /opt/server-management-service/dist/index.js --run
+Restart=on-failure
+RestartSec=10
+User=dune
+Group=dune
+
+[Install]
+WantedBy=multi-user.target
