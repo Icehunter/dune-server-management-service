@@ -27,7 +27,13 @@ export class TaskRunner {
 
     try {
       logger.info(`Starting task ${task.id}.`);
-      await task.run({ dryRun: options.dryRun, logger });
+      const outcome = await task.run({ dryRun: options.dryRun, logger });
+
+      if (outcome === 'noop') {
+        this.#runStore.deleteRun(runId);
+        return;
+      }
+
       logger.info(`Finished task ${task.id}.`);
       this.#runStore.finishRun(runId, 'success');
     } catch (error) {

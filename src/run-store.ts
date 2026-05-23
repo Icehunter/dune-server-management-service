@@ -94,6 +94,11 @@ export function createRunStore(path: string): RunStore {
       ).run(status, finishedAt, finishedAt, error ?? null, runId);
     },
 
+    deleteRun(runId) {
+      db.prepare('DELETE FROM log_entries WHERE run_id = ?').run(runId);
+      db.prepare('DELETE FROM task_runs WHERE id = ?').run(runId);
+    },
+
     log(entry) {
       db.prepare(
         `INSERT INTO log_entries (created_at, level, message, task_id, run_id)

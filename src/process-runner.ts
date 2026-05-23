@@ -1,21 +1,23 @@
 import { spawn } from 'node:child_process';
 
-import type { Logger } from './types.js';
+import type { Logger, TaskOutcome } from './types.js';
+
+const NOOP_EXIT_CODE = 75;
 
 export function runLocalScript(
   scriptPath: string,
   context: { dryRun: boolean; logger: Logger }
-): Promise<void> {
+): Promise<TaskOutcome> {
   if (context.dryRun) {
     context.logger.info(`[dry-run] ${scriptPath}`);
-    return Promise.resolve();
+    return Promise.resolve('completed');
   }
 
   context.logger.info(`Running local script: ${scriptPath}`);
   return spawnLogged(scriptPath, [], context.logger);
 }
 
-function spawnLogged(command: string, args: string[], logger: Logger): Promise<void> {
+function spawnLogged(command: string, args: string[], logger: Logger): Promise<TaskOutcome> {
   return new Promise((resolve, reject) => {
     let child;
 
@@ -33,7 +35,9 @@ function spawnLogged(command: string, args: string[], logger: Logger): Promise<v
     child.on('error', reject);
     child.on('exit', (code, signal) => {
       if (code === 0) {
-        resolve();
+        resolve('completed');
+      } else if (code === NOOP_EXIT_CODE) {
+        resolve('noop');
       } else {
         reject(new Error(`${command} exited with code ${code ?? 'null'} signal ${signal ?? 'null'}`));
       }

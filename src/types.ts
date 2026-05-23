@@ -36,11 +36,13 @@ export type TaskContext = {
   logger: Logger;
 };
 
+export type TaskOutcome = 'completed' | 'noop';
+
 export type ServiceTask = {
   id: string;
   schedule: TaskSchedule;
   description: string;
-  run(context: TaskContext): Promise<void>;
+  run(context: TaskContext): Promise<TaskOutcome>;
 };
 
 export type TaskTrigger = 'manual' | 'scheduled';
@@ -78,6 +80,7 @@ export type LogSinkEntry = {
 export type RunStore = {
   startRun(taskId: string, trigger: TaskTrigger, dryRun: boolean): number;
   finishRun(runId: number, status: Exclude<TaskRunStatus, 'running'>, error?: string): void;
+  deleteRun(runId: number): void;
   log(entry: LogSinkEntry): void;
   listRuns(limit: number, taskId?: string): TaskRun[];
   listLogs(limit: number, runId?: number): LogEntry[];
