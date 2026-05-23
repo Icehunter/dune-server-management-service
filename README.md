@@ -382,12 +382,3 @@ sudo rm -rf /opt/server-management-service
 sudo mv /opt/server-management-service.<timestamp>.bak /opt/server-management-service
 sudo systemctl start server-management-service.service
 ```
-
-## Security Notes
-
-- Do not commit `.env`.
-- Do not commit `/home/dune/.dune/state/command-auth-token`.
-- Do not expose the dashboard publicly.
-- Do not put host IPs, SSH key paths, private keys, BattleGroup IDs, or command-auth tokens in this repo.
-- Keep dashboard access behind SSH local-forwarding.
-- The SQLite DB may contain operational logs and should stay on the server.
