@@ -49,6 +49,7 @@ RUN npm ci --omit=dev && npm cache clean --force
 
 COPY --chown=dune:dune dist/ ./dist/
 COPY --chown=dune:dune scripts/ ./scripts/
+COPY --chmod=0755 docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 
 ENV DUNE_BIN_DIR=/home/dune/.dune/bin \
     DUNE_SERVICE_DB_PATH=/home/dune/.dune/state/server-management-service.sqlite \
@@ -60,4 +61,5 @@ ENV DUNE_BIN_DIR=/home/dune/.dune/bin \
 
 USER dune:dune
 
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 CMD ["node", "dist/index.js", "--run"]
