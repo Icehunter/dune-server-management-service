@@ -1,0 +1,16 @@
+# Configuration for /etc/init.d/server-management-service
+# Install to /etc/conf.d/server-management-service
+
+# Path to the Node.js binary.
+#DUNE_SERVICE_NODE="/usr/bin/node"
+
+# Install directory holding dist/ output.
+#DUNE_SERVICE_DIR="/opt/server-management-service"
+
+# Service user and group.
+#DUNE_SERVICE_USER="dune"
+#DUNE_SERVICE_GROUP="dune"
+
+# Service-level environment passed to the Node process.
+#export DUNE_SERVICE_TIME_ZONE="America/Vancouver"
+#export DUNE_RESTART_TIME_ZONE="America/Vancouver"

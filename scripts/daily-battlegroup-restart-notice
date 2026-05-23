@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-TZ_NAME="${DUNE_RESTART_TIME_ZONE:-${DUNE_SERVICE_TIME_ZONE:-Europe/Amsterdam}}"
+TZ_NAME="${DUNE_RESTART_TIME_ZONE:-${DUNE_SERVICE_TIME_ZONE:-America/Vancouver}}"
 frequency=600
 duration=1800
 dry_run=false

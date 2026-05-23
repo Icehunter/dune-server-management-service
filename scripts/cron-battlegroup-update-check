@@ -11,7 +11,7 @@ fi
 
 state_dir=/home/dune/.dune/state
 pending_file="$state_dir/pending-battlegroup-update.env"
-steamcmd=/home/dune/.local/bin/steamcmd
+steamcmd="${DUNE_STEAMCMD:-$(command -v steamcmd || true)}"
 download_path=/home/dune/.dune/download
 broadcast=/home/dune/.dune/bin/send-dune-broadcast
 lead_seconds=1800
@@ -23,8 +23,8 @@ if [[ -f "$pending_file" ]]; then
   exit 0
 fi
 
-if [[ ! -x "$steamcmd" ]]; then
-  echo "[$(date -Is)] ERROR: steamcmd not executable: $steamcmd" >&2
+if [[ -z "$steamcmd" || ! -x "$steamcmd" ]]; then
+  echo "[$(date -Is)] ERROR: steamcmd not found; install it or set DUNE_STEAMCMD" >&2
   exit 1
 fi
 

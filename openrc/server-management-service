@@ -1,0 +1,30 @@
+#!/sbin/openrc-run
+
+name="server-management-service"
+description="Dune server management service"
+
+: "${DUNE_SERVICE_NODE:=/usr/bin/node}"
+: "${DUNE_SERVICE_DIR:=/opt/server-management-service}"
+: "${DUNE_SERVICE_USER:=dune}"
+: "${DUNE_SERVICE_GROUP:=dune}"
+
+supervisor="supervise-daemon"
+command="${DUNE_SERVICE_NODE}"
+command_args="${DUNE_SERVICE_DIR}/dist/index.js --run"
+command_user="${DUNE_SERVICE_USER}:${DUNE_SERVICE_GROUP}"
+directory="${DUNE_SERVICE_DIR}"
+pidfile="/run/${RC_SVCNAME}.pid"
+output_log="/var/log/${RC_SVCNAME}.log"
+error_log="/var/log/${RC_SVCNAME}.log"
+respawn_delay=10
+respawn_max=0
+
+depend() {
+	need net
+	after k3s
+}
+
+start_pre() {
+	checkpath --directory --mode 0755 --owner "${DUNE_SERVICE_USER}:${DUNE_SERVICE_GROUP}" /run
+	checkpath --file --mode 0644 --owner "${DUNE_SERVICE_USER}:${DUNE_SERVICE_GROUP}" "${output_log}"
+}

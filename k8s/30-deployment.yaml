@@ -1,0 +1,72 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: server-management-service
+  namespace: dune-system
+  labels:
+    app: server-management-service
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: server-management-service
+  template:
+    metadata:
+      labels:
+        app: server-management-service
+    spec:
+      serviceAccountName: server-management-service
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      restartPolicy: Always
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      containers:
+        - name: server-management-service
+          image: dune-server-management-service:local
+          imagePullPolicy: Never
+          envFrom:
+            - configMapRef:
+                name: server-management-service-env
+          ports:
+            - name: dashboard
+              containerPort: 8787
+              hostPort: 8787
+              protocol: TCP
+          volumeMounts:
+            - name: dune-home
+              mountPath: /home/dune/.dune
+            - name: funcom
+              mountPath: /funcom
+            - name: k3s-bin
+              mountPath: /usr/local/bin/k3s
+              readOnly: true
+            - name: containerd-sock
+              mountPath: /run/k3s/containerd/containerd.sock
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              memory: 512Mi
+      volumes:
+        - name: dune-home
+          hostPath:
+            path: /home/dune/.dune
+            type: Directory
+        - name: funcom
+          hostPath:
+            path: /funcom
+            type: Directory
+        - name: k3s-bin
+          hostPath:
+            path: /usr/local/bin/k3s
+            type: File
+        - name: containerd-sock
+          hostPath:
+            path: /run/k3s/containerd/containerd.sock
+            type: Socket

@@ -7,7 +7,7 @@ const DEFAULTS = {
   binDir: '/home/dune/.dune/bin',
   dashboardHost: '127.0.0.1',
   dashboardPort: 8787,
-  timeZone: 'Europe/Amsterdam'
+  timeZone: 'America/Vancouver'
 } as const;
 
 export function loadConfig(): ServiceConfig {
