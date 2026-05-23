@@ -9,8 +9,8 @@ The service runs as the `dune` user on the Linux host. It schedules existing ope
 - Database backup every 2 hours.
 - Steam update check every 15 minutes.
 - Pending update apply check every minute.
-- Daily restart warning at 04:30 Europe/Amsterdam.
-- Daily restart at 05:00 Europe/Amsterdam.
+- Daily restart warning at 04:30 in the configured service timezone.
+- Daily restart at 05:00 in the configured service timezone.
 - SQLite run history and task logs.
 - Web dashboard on `127.0.0.1:8787` by default.
 
@@ -74,12 +74,17 @@ Optional environment variables:
 DUNE_BIN_DIR=/home/dune/.dune/bin
 DUNE_SERVICE_DB_PATH=/home/dune/.dune/state/server-management-service.sqlite
 DUNE_SERVICE_TIME_ZONE=Europe/Amsterdam
+DUNE_RESTART_TIME_ZONE=Europe/Amsterdam
 DUNE_DASHBOARD_HOST=127.0.0.1
 DUNE_DASHBOARD_PORT=8787
 DUNE_COMMAND_AUTH_TOKEN_FILE=/home/dune/.dune/state/command-auth-token
 ```
 
 `DUNE_COMMAND_AUTH_TOKEN` can also be set directly, but a private token file is preferred.
+
+`DUNE_SERVICE_TIME_ZONE` controls the scheduler's wall-clock time. The packaged default is `Europe/Amsterdam` because that is the operator's current server timezone choice. Other operators should set it to their own IANA timezone, for example `Europe/Berlin`, `America/New_York`, or `Australia/Sydney`.
+
+`DUNE_RESTART_TIME_ZONE` is optional. If unset, restart warning payloads use `DUNE_SERVICE_TIME_ZONE`. Set it only if the restart broadcast timestamp should be computed in a different timezone than the service scheduler.
 
 Do not commit `.env`, command-auth tokens, private keys, host-specific IPs, or BattleGroup identifiers.
 
@@ -191,7 +196,7 @@ Verify dry-runs:
 ```bash
 /home/dune/.dune/bin/cron-battlegroup-backup --help 2>/dev/null || true
 /home/dune/.dune/bin/daily-battlegroup-restart --dry-run
-target=$(TZ=Europe/Amsterdam date -d 'tomorrow 05:00' +%s)
+target=$(TZ="${DUNE_RESTART_TIME_ZONE:-${DUNE_SERVICE_TIME_ZONE:-Europe/Amsterdam}}" date -d 'tomorrow 05:00' +%s)
 /home/dune/.dune/bin/send-dune-shutdown-broadcast --timestamp "$target" --dry-run
 ```
 
@@ -262,6 +267,17 @@ Scheduled update-check every 900s.
 Scheduled update-apply every 60s.
 Scheduled restart-notice for ...
 Scheduled restart for ...
+```
+
+If the server should use another timezone, create `/etc/server-management-service.env` before starting the service:
+
+```bash
+sudo tee /etc/server-management-service.env >/dev/null <<'EOF'
+DUNE_SERVICE_TIME_ZONE=Europe/London
+DUNE_RESTART_TIME_ZONE=Europe/London
+EOF
+sudo chown root:root /etc/server-management-service.env
+sudo chmod 0644 /etc/server-management-service.env
 ```
 
 ### 8. Disable Replaced Cron Entries
@@ -375,4 +391,3 @@ sudo systemctl start server-management-service.service
 - Do not put host IPs, SSH key paths, private keys, BattleGroup IDs, or command-auth tokens in this repo.
 - Keep dashboard access behind SSH local-forwarding.
 - The SQLite DB may contain operational logs and should stay on the server.
-
