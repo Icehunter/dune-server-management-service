@@ -1,5 +1,47 @@
 #!/usr/bin/env bash
 
+dune_export_kubeconfig() {
+  [[ -n "${KUBECONFIG:-}" ]] && return 0
+
+  local _kc
+  for _kc in \
+    /etc/rancher/k3s/k3s.yaml \
+    "$HOME/.kube/config"
+  do
+    if [[ -r "$_kc" ]]; then
+      export KUBECONFIG="$_kc"
+      return 0
+    fi
+  done
+
+  local _sa=/var/run/secrets/kubernetes.io/serviceaccount
+  if [[ -f "$_sa/token" && -n "${KUBERNETES_SERVICE_HOST:-}" ]]; then
+    _kc=/tmp/dune-in-cluster-kubeconfig.yaml
+    if [[ ! -f "$_kc" ]]; then
+      cat > "$_kc" <<EOF
+apiVersion: v1
+kind: Config
+clusters:
+- cluster:
+    certificate-authority: ${_sa}/ca.crt
+    server: https://${KUBERNETES_SERVICE_HOST}:${KUBERNETES_SERVICE_PORT:-443}
+  name: default
+contexts:
+- context:
+    cluster: default
+    user: default
+  name: default
+current-context: default
+users:
+- name: default
+  user:
+    tokenFile: ${_sa}/token
+EOF
+    fi
+    export KUBECONFIG="$_kc"
+  fi
+}
+
 dune_select_kubectl() {
   if command -v kubectl >/dev/null 2>&1 && kubectl version --client >/dev/null 2>&1; then
     kubectl_cmd=(kubectl)

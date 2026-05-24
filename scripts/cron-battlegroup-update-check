@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
+trap 'echo "[$(date -Is)] ERROR: unexpected failure at line $LINENO (exit $?)" >&2' ERR
 export PATH=/home/dune/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+# shellcheck source=lib/dune-service-common.sh
+source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/lib/dune-service-common.sh"
+dune_export_kubeconfig
 
 lock=/tmp/dune-battlegroup-update-check.lock
 exec 9>"$lock"
@@ -57,7 +62,10 @@ fi
 ns="${namespaces[0]}"
 bg="${ns#funcom-seabass-}"
 bg_json=$(mktemp)
-kubectl get battlegroup "$bg" -n "$ns" -o json > "$bg_json"
+if ! kubectl get battlegroup "$bg" -n "$ns" -o json > "$bg_json"; then
+  echo "[$(date -Is)] ERROR: kubectl get battlegroup failed for bg=$bg ns=$ns" >&2
+  exit 1
+fi
 live_version=$(python3 - "$bg_json" <<'PY'
 import json, re, sys
 obj=json.load(open(sys.argv[1]))

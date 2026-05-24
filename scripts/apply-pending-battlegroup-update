@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
+trap 'echo "[$(date -Is)] ERROR: unexpected failure at line $LINENO (exit $?)" >&2' ERR
 export PATH=/home/dune/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+# shellcheck source=lib/dune-service-common.sh
+source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/lib/dune-service-common.sh"
+dune_export_kubeconfig
 
 lock=/tmp/dune-apply-battlegroup-update.lock
 exec 9>"$lock"
