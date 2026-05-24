@@ -39,7 +39,10 @@ RUN userdel -r node 2>/dev/null || true && \
     useradd -m -u 1000 -g 1000 -s /bin/bash dune && \
     install -d -m 0755 -o dune -g dune /home/dune/.dune /home/dune/.dune/state \
                        /home/dune/.dune/bin /home/dune/.dune/download && \
-    echo 'dune ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/dune && \
+    printf '%s\n' \
+      'dune ALL=(ALL) NOPASSWD: ALL' \
+      'Defaults:dune env_keep += "KUBECONFIG"' \
+      > /etc/sudoers.d/dune && \
     chmod 0440 /etc/sudoers.d/dune
 
 WORKDIR /opt/server-management-service
