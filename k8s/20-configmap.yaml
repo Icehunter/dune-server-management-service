@@ -6,3 +6,4 @@ metadata:
 data:
   DUNE_SERVICE_TIME_ZONE: "America/Vancouver"
   DUNE_RESTART_TIME_ZONE: "America/Vancouver"
+  DUNE_STEAMCMD: "/home/dune/.local/share/Steam/steamcmd/steamcmd.sh"

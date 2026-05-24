@@ -40,6 +40,8 @@ spec:
           volumeMounts:
             - name: dune-home
               mountPath: /home/dune/.dune
+            - name: steam-local
+              mountPath: /home/dune/.local/share/Steam
             - name: funcom
               mountPath: /funcom
             - name: k3s-bin
@@ -66,6 +68,10 @@ spec:
           hostPath:
             path: /usr/local/bin/k3s
             type: File
+        - name: steam-local
+          hostPath:
+            path: /home/dune/.local/share/Steam
+            type: Directory
         - name: containerd-sock
           hostPath:
             path: /run/k3s/containerd/containerd.sock

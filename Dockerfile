@@ -59,7 +59,7 @@ ENV DUNE_BIN_DIR=/home/dune/.dune/bin \
     DUNE_COMMAND_AUTH_TOKEN_FILE=/home/dune/.dune/state/command-auth-token \
     DUNE_DASHBOARD_HOST=127.0.0.1 \
     DUNE_DASHBOARD_PORT=8787 \
-    DUNE_STEAMCMD=/usr/local/bin/steamcmd \
+    DUNE_STEAMCMD=/opt/steamcmd/steamcmd.sh \
     PATH=/home/dune/.dune/bin:/usr/local/bin:/usr/bin:/bin:/sbin
 
 USER dune:dune

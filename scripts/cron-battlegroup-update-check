@@ -33,14 +33,36 @@ if [[ -z "$steamcmd" || ! -x "$steamcmd" ]]; then
   exit 1
 fi
 
-latest_build=$(
-  "$steamcmd" +login anonymous +app_info_update 1 +app_info_print "$app_id" +quit 2>/tmp/dune-update-appinfo.err \
-    | awk '
-      /"branches"/ { inbranches=1 }
-      inbranches && /"public"/ { inpublic=1 }
-      inpublic && /"buildid"/ { gsub(/"/, "", $2); print $2; exit }
-    '
-)
+steamcmd_stdout=$(mktemp)
+steamcmd_rc=0
+"$steamcmd" +login anonymous +app_info_update 1 +app_info_print "$app_id" +quit \
+  >"$steamcmd_stdout" 2>/tmp/dune-update-appinfo.err || steamcmd_rc=$?
+
+# Exit 7 means steamcmd self-updated; re-run once with the updated binary.
+if [[ $steamcmd_rc -eq 7 ]]; then
+  echo "[$(date -Is)] steamcmd self-updated; re-running"
+  steamcmd_rc=0
+  "$steamcmd" +login anonymous +app_info_update 1 +app_info_print "$app_id" +quit \
+    >"$steamcmd_stdout" 2>/tmp/dune-update-appinfo.err || steamcmd_rc=$?
+fi
+
+if [[ $steamcmd_rc -ne 0 ]]; then
+  echo "[$(date -Is)] ERROR: steamcmd exited $steamcmd_rc" >&2
+  echo "[$(date -Is)] stdout (first 40 lines):" >&2
+  sed -n '1,40p' "$steamcmd_stdout" >&2 || true
+  echo "[$(date -Is)] stderr (first 40 lines):" >&2
+  sed -n '1,40p' /tmp/dune-update-appinfo.err >&2 || true
+  rm -f "$steamcmd_stdout"
+  exit 1
+fi
+
+latest_build=$(awk '
+  /"branches"/ { inbranches=1 }
+  inbranches && /"public"/ { inpublic=1 }
+  inpublic && /"buildid"/ { gsub(/"/, "", $2); print $2; exit }
+' "$steamcmd_stdout")
+rm -f "$steamcmd_stdout"
+
 if [[ -z "$latest_build" ]]; then
   echo "[$(date -Is)] ERROR: could not determine latest Steam buildid" >&2
   sed -n '1,80p' /tmp/dune-update-appinfo.err >&2 || true
